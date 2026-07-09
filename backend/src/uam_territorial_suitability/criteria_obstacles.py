@@ -121,6 +121,42 @@ def find_ofv_violations(
     return violations
 
 
+def max_supportable_aircraft_d(
+    dsm_path: str,
+    center_x: float,
+    center_y: float,
+    reference_elevation_m: float,
+    d_search_range_m: tuple[float, float] = (1.0, 50.0),
+    tolerance_m: float = 0.1,
+) -> float:
+    """Largest reference aircraft dimension D a candidate site can support
+    without an OFV violation, found by binary search.
+
+    Motivation (user request, 2026-07-09): instead of asking the operator to
+    supply an assumed "available diameter", derive directly from the real
+    DSM/MDS which real aircraft (by their D) a given heliponto/site can
+    actually accommodate — some existing heliports will be too tight for
+    larger eVTOL designs. Monotonicity assumption: a larger D both scans a
+    wider radius (ofv_scan_radius_m grows with D) and demands more clearance
+    at any given absolute distance in the h1-h2 transition band (the
+    allowed-height envelope scales down proportionally to D too) — so
+    violations are non-decreasing in D, which is what binary search relies on.
+    """
+    low, high = d_search_range_m
+    if find_ofv_violations(dsm_path, center_x, center_y, reference_elevation_m, low):
+        return 0.0  # cannot even support the smallest D in range
+    if not find_ofv_violations(dsm_path, center_x, center_y, reference_elevation_m, high):
+        return high  # supports the largest D in range and beyond (not searched further)
+
+    while high - low > tolerance_m:
+        mid = (low + high) / 2
+        if find_ofv_violations(dsm_path, center_x, center_y, reference_elevation_m, mid):
+            high = mid
+        else:
+            low = mid
+    return low
+
+
 def obstacles_score(violations: list[ObstacleViolation]) -> float:
     """Normalized [0, 1] score — 1.0 means no OFV violations found."""
     if not violations:
