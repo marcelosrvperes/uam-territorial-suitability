@@ -65,6 +65,30 @@ def test_five_percent_ramp_measures_close_to_five_percent(five_percent_slope_dem
     assert slope == pytest.approx(5.0, abs=0.1)
 
 
+def test_noisy_flat_dem_is_not_inflated_by_pixel_noise(tmp_path) -> None:
+    """Regression test for D46: real GeoSampa MDT cells carry +-0.1-0.15 m
+    measurement noise (sparse ground points per 1 m cell) even where the true
+    grade is flat/gentle. A per-pixel finite-difference gradient amplifies
+    that noise into a spurious slope reading (observed: Congonhas' runway,
+    truly ~2%, read as ~4.15% before this fix); a least-squares plane fit
+    should average the noise out and recover the true near-zero grade.
+    """
+    size = 60
+    rng = np.random.default_rng(46)
+    base = np.zeros((size, size), dtype="float64")
+    noisy = base + rng.uniform(-0.13, 0.13, size=(size, size))
+    path = str(tmp_path / "noisy_flat.tif")
+    transform = from_origin(0, size, 1.0, 1.0)
+    with rasterio.open(
+        path, "w", driver="GTiff", height=size, width=size, count=1,
+        dtype="float64", crs="EPSG:31983", transform=transform, nodata=-9999.0,
+    ) as dst:
+        dst.write(noisy.astype("float32"), 1)
+
+    slope = mean_slope_percent(path, center_x=30, center_y=30, radius_m=20)
+    assert slope < 1.0  # true grade is 0%; old pixel-gradient code read ~10%+ here
+
+
 def test_passes_topography_ground_limit() -> None:
     assert passes_topography(2.9, elevated=False)
     assert not passes_topography(3.1, elevated=False)
