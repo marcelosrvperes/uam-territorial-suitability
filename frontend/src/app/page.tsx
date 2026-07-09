@@ -1,3 +1,5 @@
+import AptitudeMapClient from "@/components/AptitudeMapClient";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 type Criterion = {
@@ -29,10 +31,13 @@ export default async function Home() {
   const criteria = await getCriteria();
 
   return (
-    <main style={{ maxWidth: 720, margin: "0 auto", padding: "2rem", fontFamily: "sans-serif" }}>
+    <main style={{ maxWidth: 1100, margin: "0 auto", padding: "2rem", fontFamily: "sans-serif" }}>
       <h1>UAM Territorial Suitability</h1>
       <p>Módulo 02 — ferramenta de aptidão territorial para vertiportos (protótipo inicial).</p>
 
+      <AptitudeMapClient />
+
+      <h2 style={{ marginTop: "2rem" }}>Critérios definidos</h2>
       {!criteria && (
         <p style={{ color: "#b00" }}>
           Não foi possível carregar os critérios de {API_URL}. O backend está rodando?
