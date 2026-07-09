@@ -1,5 +1,7 @@
 import os
+from unittest.mock import patch
 
+import geopandas as gpd
 import pytest
 from fastapi.testclient import TestClient
 
@@ -15,6 +17,28 @@ VALID_PAYLOAD = {
     "aircraft_d_m": 16.0,
     "geometry_standard": "easa",
 }
+
+_EMPTY_OSM_RESULT = gpd.GeoDataFrame({"category": []}, geometry=[], crs="EPSG:4326")
+
+
+@pytest.fixture(autouse=True)
+def _no_live_osm_calls():
+    """Every test in this module mocks the OSM fetch — Overpass is a live,
+    rate-limited public service (see D37); automated tests must not depend
+    on it being reachable."""
+    with patch(
+        "uam_territorial_suitability.api.routes.fetch_land_use_features",
+        return_value=_EMPTY_OSM_RESULT,
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _clean_env(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("REH_CORRIDORS_PATH", raising=False)
+    monkeypatch.delenv("DTM_PATH", raising=False)
+    monkeypatch.delenv("DSM_PATH", raising=False)
+    routes._cached_reh_corridors.cache_clear()
 
 
 def test_aptitude_computes_geometry() -> None:
@@ -40,13 +64,23 @@ def test_aptitude_rejects_invalid_diameter() -> None:
 def test_aptitude_marks_unimplemented_criteria() -> None:
     response = client.post("/api/aptitude", json=VALID_PAYLOAD)
     body = response.json()
-    for criterion_id in ["obstacles", "heliport_retrofit", "land_use", "proximity", "topography"]:
+    # land_use is always attempted (live OSM, no config gate) — mocked to an
+    # empty result above, so it comes back "computed", not "not_implemented".
+    for criterion_id in ["obstacles", "heliport_retrofit", "proximity", "topography"]:
         assert body["criteria"][criterion_id]["status"] == "not_implemented"
+    assert body["criteria"]["land_use"]["status"] == "computed"
     assert "parcial" in body["note"].lower()
+    assert body["aptitude"] is None
 
 
-def test_aptitude_airspace_light_not_implemented_without_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(routes._REH_CORRIDORS_PATH_ENV, raising=False)
+def test_aptitude_land_use_computed_via_mocked_osm() -> None:
+    response = client.post("/api/aptitude", json=VALID_PAYLOAD)
+    body = response.json()
+    assert body["criteria"]["land_use"]["status"] == "computed"
+    assert body["criteria"]["land_use"]["value"] == 1.0  # no features -> best-case score
+
+
+def test_aptitude_airspace_light_not_implemented_without_env_var() -> None:
     response = client.post("/api/aptitude", json=VALID_PAYLOAD)
     assert response.json()["criteria"]["airspace_light"]["status"] == "not_implemented"
 
@@ -56,9 +90,27 @@ def test_aptitude_airspace_light_not_implemented_without_env_var(monkeypatch: py
     reason="Set UAM_TEST_REH_PATH to a real REH shapefile to run this integration test",
 )
 def test_aptitude_airspace_light_computed_with_real_data(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(routes._REH_CORRIDORS_PATH_ENV, os.environ["UAM_TEST_REH_PATH"])
+    monkeypatch.setenv("REH_CORRIDORS_PATH", os.environ["UAM_TEST_REH_PATH"])
     routes._cached_reh_corridors.cache_clear()
     response = client.post("/api/aptitude", json=VALID_PAYLOAD)
     outcome = response.json()["criteria"]["airspace_light"]
     assert outcome["status"] == "computed"
     assert 0.0 <= outcome["value"] <= 1.0
+
+
+def test_aptitude_heliport_retrofit_requires_geometry_and_obstacles() -> None:
+    response = client.post("/api/aptitude", json=VALID_PAYLOAD)
+    body = response.json()
+    # obstacles is not_implemented (no DSM_PATH) -> heliport_retrofit can't be computed either.
+    assert body["criteria"]["heliport_retrofit"]["status"] == "not_implemented"
+
+
+def test_aptitude_land_use_reports_failure_on_network_error() -> None:
+    import requests
+
+    with patch(
+        "uam_territorial_suitability.api.routes.fetch_land_use_features",
+        side_effect=requests.HTTPError("504 Gateway Timeout"),
+    ):
+        response = client.post("/api/aptitude", json=VALID_PAYLOAD)
+    assert response.json()["criteria"]["land_use"]["status"] == "failed"
