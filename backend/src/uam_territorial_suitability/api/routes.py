@@ -14,9 +14,14 @@ from uam_territorial_suitability.criteria_airspace import airspace_light_score
 from uam_territorial_suitability.criteria_geometry import GeometryStandard, passes_geometry
 from uam_territorial_suitability.criteria_land_use import ZONE_RADIUS_M, Zone, land_use_score
 from uam_territorial_suitability.criteria_obstacles import find_ofv_violations, obstacles_score
+from uam_territorial_suitability.criteria_proximity import proximity_score
 from uam_territorial_suitability.criteria_topography import mean_slope_percent, passes_topography
-from uam_territorial_suitability.data_sources import load_reh_corridors
-from uam_territorial_suitability.osm_fetch import fetch_land_use_features
+from uam_territorial_suitability.data_sources import load_heliports_airports, load_reh_corridors
+from uam_territorial_suitability.osm_fetch import (
+    fetch_land_use_features,
+    fetch_major_roads,
+    fetch_transit_nodes,
+)
 
 router = APIRouter()
 
@@ -24,6 +29,11 @@ router = APIRouter()
 @lru_cache(maxsize=1)
 def _cached_reh_corridors(path: str) -> gpd.GeoDataFrame:
     return load_reh_corridors(path)
+
+
+@lru_cache(maxsize=1)
+def _cached_heliports_airports(path: str) -> gpd.GeoDataFrame:
+    return load_heliports_airports(path)
 
 
 @router.get("/criteria", response_model=list[Criterion])
@@ -162,11 +172,32 @@ def compute_aptitude(request: AptitudeRequest) -> AptitudeResponse:
     except requests.RequestException as exc:
         results["land_use"] = CriterionOutcome(status=CriterionStatus.FAILED, detail=str(exc))
 
-    # --- proximity (weighted) — not wired yet, needs a transit/road OSM fetcher ---
-    results["proximity"] = CriterionOutcome(
-        status=CriterionStatus.NOT_IMPLEMENTED,
-        detail="Transit/road data source not wired into the API yet.",
-    )
+    # --- proximity (weighted) ---
+    try:
+        proximity_radius_m = 2000.0  # generous outer bound; sub-scores decay well within this
+        transit = fetch_transit_nodes(request.latitude, request.longitude, proximity_radius_m)
+        roads = fetch_major_roads(request.latitude, request.longitude, proximity_radius_m)
+        transit_utm = transit.to_crs("EPSG:31983") if not transit.empty else transit
+        roads_utm = roads.to_crs("EPSG:31983") if not roads.empty else roads
+
+        heliports_path = settings.heliports_airports_path()
+        if heliports_path is not None:
+            aeronautical_utm = _cached_heliports_airports(heliports_path)
+        else:
+            aeronautical_utm = gpd.GeoDataFrame(geometry=[], crs="EPSG:31983")
+
+        breakdown = proximity_score(site, transit_utm, aeronautical_utm, roads_utm)
+        results["proximity"] = CriterionOutcome(
+            status=CriterionStatus.COMPUTED,
+            value=breakdown.combined_score,
+            detail=(
+                f"transit={breakdown.transit_score:.2f} "
+                f"aeronautical={breakdown.aeronautical_score:.2f} "
+                f"road={breakdown.road_score:.2f}"
+            ),
+        )
+    except requests.RequestException as exc:
+        results["proximity"] = CriterionOutcome(status=CriterionStatus.FAILED, detail=str(exc))
 
     # --- heliport_retrofit (exclusion) — composite of geometry + obstacles ---
     if results["geometry"].status == CriterionStatus.COMPUTED and results["obstacles"].status == CriterionStatus.COMPUTED:

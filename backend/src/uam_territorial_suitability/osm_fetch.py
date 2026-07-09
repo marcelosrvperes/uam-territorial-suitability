@@ -22,15 +22,52 @@ _HEADERS = {"User-Agent": "uam-territorial-suitability/0.1 (thesis research tool
 _AMENITY_VALUES = list(OSM_TAG_TO_CATEGORY.keys())
 
 
-def _build_query(lat: float, lon: float, radius_m: float) -> str:
-    amenity_filter = "|".join(_AMENITY_VALUES)
+def _build_node_query(lat: float, lon: float, radius_m: float, key: str, values: list[str]) -> str:
+    value_filter = "|".join(values)
     return f"""
     [out:json][timeout:{_REQUEST_TIMEOUT_S}];
     (
-      node["amenity"~"^({amenity_filter})$"](around:{radius_m},{lat},{lon});
+      node["{key}"~"^({value_filter})$"](around:{radius_m},{lat},{lon});
     );
     out center;
     """
+
+
+def _run_query(query: str) -> list[dict]:
+    response = requests.post(_OVERPASS_URL, data={"data": query}, headers=_HEADERS, timeout=_REQUEST_TIMEOUT_S)
+    response.raise_for_status()
+    return response.json().get("elements", [])
+
+
+def fetch_transit_nodes(lat: float, lon: float, radius_m: float) -> gpd.GeoDataFrame:
+    """Public transit stops/stations near (lat, lon) — criterion 5 (proximity)."""
+    elements = _run_query(
+        _build_node_query(
+            lat, lon, radius_m, "public_transport", ["stop_position", "station", "platform"]
+        )
+    )
+    geometries = [Point(e["lon"], e["lat"]) for e in elements if "lon" in e and "lat" in e]
+    return gpd.GeoDataFrame(geometry=geometries, crs="EPSG:4326")
+
+
+def fetch_major_roads(lat: float, lon: float, radius_m: float) -> gpd.GeoDataFrame:
+    """Major road segments (primary/trunk/motorway) near (lat, lon) — criterion 5.
+
+    Roads are ways, not nodes — queried and returned as their centroid via
+    Overpass `out center`, which is precise enough for a proximity check at
+    this scale (hundreds of meters).
+    """
+    value_filter = "|".join(["motorway", "trunk", "primary", "secondary"])
+    query = f"""
+    [out:json][timeout:{_REQUEST_TIMEOUT_S}];
+    (
+      way["highway"~"^({value_filter})$"](around:{radius_m},{lat},{lon});
+    );
+    out center;
+    """
+    elements = _run_query(query)
+    geometries = [Point(e["center"]["lon"], e["center"]["lat"]) for e in elements if "center" in e]
+    return gpd.GeoDataFrame(geometry=geometries, crs="EPSG:4326")
 
 
 def fetch_land_use_features(lat: float, lon: float, radius_m: float) -> gpd.GeoDataFrame:
@@ -42,12 +79,7 @@ def fetch_land_use_features(lat: float, lon: float, radius_m: float) -> gpd.GeoD
     on network/API failure; callers should treat that as "criterion not
     computable right now", not as "no land use nearby".
     """
-    query = _build_query(lat, lon, radius_m)
-    response = requests.post(
-        _OVERPASS_URL, data={"data": query}, headers=_HEADERS, timeout=_REQUEST_TIMEOUT_S
-    )
-    response.raise_for_status()
-    elements = response.json().get("elements", [])
+    elements = _run_query(_build_node_query(lat, lon, radius_m, "amenity", _AMENITY_VALUES))
 
     categories = []
     geometries = []

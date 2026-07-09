@@ -19,16 +19,27 @@ VALID_PAYLOAD = {
 }
 
 _EMPTY_OSM_RESULT = gpd.GeoDataFrame({"category": []}, geometry=[], crs="EPSG:4326")
+_EMPTY_POINTS_RESULT = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
 
 
 @pytest.fixture(autouse=True)
 def _no_live_osm_calls():
-    """Every test in this module mocks the OSM fetch — Overpass is a live,
+    """Every test in this module mocks all OSM fetches — Overpass is a live,
     rate-limited public service (see D37); automated tests must not depend
     on it being reachable."""
-    with patch(
-        "uam_territorial_suitability.api.routes.fetch_land_use_features",
-        return_value=_EMPTY_OSM_RESULT,
+    with (
+        patch(
+            "uam_territorial_suitability.api.routes.fetch_land_use_features",
+            return_value=_EMPTY_OSM_RESULT,
+        ),
+        patch(
+            "uam_territorial_suitability.api.routes.fetch_transit_nodes",
+            return_value=_EMPTY_POINTS_RESULT,
+        ),
+        patch(
+            "uam_territorial_suitability.api.routes.fetch_major_roads",
+            return_value=_EMPTY_POINTS_RESULT,
+        ),
     ):
         yield
 
@@ -64,13 +75,21 @@ def test_aptitude_rejects_invalid_diameter() -> None:
 def test_aptitude_marks_unimplemented_criteria() -> None:
     response = client.post("/api/aptitude", json=VALID_PAYLOAD)
     body = response.json()
-    # land_use is always attempted (live OSM, no config gate) — mocked to an
-    # empty result above, so it comes back "computed", not "not_implemented".
-    for criterion_id in ["obstacles", "heliport_retrofit", "proximity", "topography"]:
+    # land_use and proximity are always attempted (live OSM, no config gate)
+    # — mocked to empty results above, so they come back "computed".
+    for criterion_id in ["obstacles", "heliport_retrofit", "topography"]:
         assert body["criteria"][criterion_id]["status"] == "not_implemented"
     assert body["criteria"]["land_use"]["status"] == "computed"
+    assert body["criteria"]["proximity"]["status"] == "computed"
     assert "parcial" in body["note"].lower()
     assert body["aptitude"] is None
+
+
+def test_aptitude_proximity_computed_via_mocked_osm() -> None:
+    response = client.post("/api/aptitude", json=VALID_PAYLOAD)
+    body = response.json()
+    assert body["criteria"]["proximity"]["status"] == "computed"
+    assert body["criteria"]["proximity"]["value"] == 0.0  # nothing nearby -> worst case
 
 
 def test_aptitude_land_use_computed_via_mocked_osm() -> None:

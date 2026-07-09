@@ -24,3 +24,10 @@ def dtm_path() -> str | None:
     """Digital Terrain Model (MDT) — for the topography criterion. Must be
     bare-earth; do NOT point this at the same file as DSM_PATH (see D35)."""
     return os.environ.get("DTM_PATH")
+
+
+def heliports_airports_path() -> str | None:
+    """ANAC/DECEA heliport/aerodrome dataset — for the proximity criterion's
+    aeronautical-infrastructure sub-factor (existing helipads/airports
+    nearby are a positive, not a conflict — unlike criterion 4)."""
+    return os.environ.get("HELIPORTS_AIRPORTS_PATH")
