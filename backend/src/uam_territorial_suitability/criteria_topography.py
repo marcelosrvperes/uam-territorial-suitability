@@ -16,6 +16,13 @@ feeding it a surface model instead of bare terrain produced a spurious 4.48%
 "slope" at the ARP, an artifact of surface objects (pavement edges, nearby
 structures) rather than actual ground grade. See criterios_aptidao.md
 criterion 7 for the full note.
+
+IMPORTANT — do not call this against a DTM for an elevated/rooftop site
+(D47): there is no bare earth under a rooftop pad to sample. Validated
+against real rooftop heliport data: the DTM window is mostly NoData there,
+and what little valid terrain leaks in is street level tens of meters below
+the pad, producing physically nonsensical slope readings. The caller
+(api/routes.py) skips this function entirely when `elevated_heliport=True`.
 """
 
 import numpy as np

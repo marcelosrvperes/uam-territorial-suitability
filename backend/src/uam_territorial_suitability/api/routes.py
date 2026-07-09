@@ -121,6 +121,19 @@ def compute_aptitude(request: AptitudeRequest) -> AptitudeResponse:
         results["topography"] = CriterionOutcome(
             status=CriterionStatus.NOT_IMPLEMENTED, detail="DTM_PATH not configured."
         )
+    elif request.elevated_heliport:
+        # D47: a bare-earth DTM has no meaning at a rooftop/structure site —
+        # there is no terrain under the pad to sample (validated against real
+        # data: rooftop sites showed <30% valid DTM coverage in an 8 m window,
+        # with the few valid pixels picking up street level ~50-60m below the
+        # pad, producing physically nonsensical slopes up to hundreds of
+        # percent). The FATO grading check only applies to ground-level
+        # candidate sites; an elevated pad's flatness is a construction fact,
+        # not something a terrain model can assess.
+        results["topography"] = CriterionOutcome(
+            status=CriterionStatus.NOT_IMPLEMENTED,
+            detail="Not applicable to elevated/rooftop sites — no bare-earth terrain exists under the pad (D47).",
+        )
     else:
         try:
             slope = mean_slope_percent(

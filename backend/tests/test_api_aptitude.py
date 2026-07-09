@@ -85,6 +85,20 @@ def test_aptitude_marks_unimplemented_criteria() -> None:
     assert body["aptitude"] is None
 
 
+def test_aptitude_skips_topography_for_elevated_site(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D47: a rooftop/elevated site has no bare-earth DTM underneath it — the
+    endpoint must not even attempt the DTM read, not just discard a garbage
+    result."""
+    monkeypatch.setenv("DTM_PATH", "dummy_not_read.tif")
+    with patch("uam_territorial_suitability.api.routes.mean_slope_percent") as mocked:
+        payload = {**VALID_PAYLOAD, "elevated_heliport": True}
+        response = client.post("/api/aptitude", json=payload)
+        mocked.assert_not_called()
+    body = response.json()
+    assert body["criteria"]["topography"]["status"] == "not_implemented"
+    assert "elevat" in body["criteria"]["topography"]["detail"].lower()
+
+
 def test_aptitude_proximity_computed_via_mocked_osm() -> None:
     response = client.post("/api/aptitude", json=VALID_PAYLOAD)
     body = response.json()
