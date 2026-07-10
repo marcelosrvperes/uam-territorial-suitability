@@ -70,9 +70,35 @@ def test_roads_bbox_uses_way_centers() -> None:
 
 def test_raises_on_http_error() -> None:
     response = MagicMock()
+    response.status_code = 504
     response.raise_for_status.side_effect = requests.HTTPError("504 Gateway Timeout")
     with (
         patch("uam_territorial_suitability.osm_batch.requests.post", return_value=response),
         pytest.raises(requests.HTTPError),
     ):
         fetch_land_use_features_bbox(south=-23.7, west=-46.8, north=-23.4, east=-46.4)
+
+
+def test_retries_on_429_then_succeeds() -> None:
+    rate_limited = MagicMock(status_code=429)
+    ok = _mock_response(_FAKE_TRANSIT_RESPONSE)
+    ok.status_code = 200
+    mock_post = MagicMock(side_effect=[rate_limited, ok])
+    with (
+        patch("uam_territorial_suitability.osm_batch.requests.post", mock_post),
+        patch("uam_territorial_suitability.osm_batch.time.sleep"),
+    ):
+        nodes = fetch_transit_nodes_bbox(south=-23.7, west=-46.8, north=-23.4, east=-46.4)
+    assert len(nodes) == 2
+    assert mock_post.call_count == 2
+
+
+def test_gives_up_after_max_retries_on_persistent_429() -> None:
+    rate_limited = MagicMock(status_code=429)
+    mock_post = MagicMock(return_value=rate_limited)
+    with (
+        patch("uam_territorial_suitability.osm_batch.requests.post", mock_post),
+        patch("uam_territorial_suitability.osm_batch.time.sleep"),
+        pytest.raises(requests.HTTPError),
+    ):
+        fetch_transit_nodes_bbox(south=-23.7, west=-46.8, north=-23.4, east=-46.4)

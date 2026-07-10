@@ -10,6 +10,8 @@ distance computation, already implemented in criteria_land_use.py and
 criteria_proximity.py — those functions never assumed a pre-filtered radius).
 """
 
+import time
+
 import geopandas as gpd
 import requests
 from shapely.geometry import Point
@@ -24,11 +26,26 @@ _HEADERS = {"User-Agent": "uam-territorial-suitability/0.1 (thesis research tool
 
 _AMENITY_VALUES = list(OSM_TAG_TO_CATEGORY.keys())
 
+# Even 3 large bbox queries in a row can trip Overpass's public-instance rate
+# limit (429) — the batch approach cuts call *count* from 3*N to 3, but each
+# call is heavier, and the limiter also weighs query cost/load. Retry with
+# backoff rather than fail the whole batch over a transient 429 (D37 — known
+# operational risk of the free public instance, not hidden).
+_MAX_RETRIES = 4
+_RETRY_BACKOFF_S = 20.0
+
 
 def _run_query(query: str) -> list[dict]:
-    response = requests.post(_OVERPASS_URL, data={"data": query}, headers=_HEADERS, timeout=_REQUEST_TIMEOUT_S)
-    response.raise_for_status()
-    return response.json().get("elements", [])
+    last_error: requests.HTTPError | None = None
+    for attempt in range(_MAX_RETRIES):
+        response = requests.post(_OVERPASS_URL, data={"data": query}, headers=_HEADERS, timeout=_REQUEST_TIMEOUT_S)
+        if response.status_code == 429:
+            last_error = requests.HTTPError("429 Too Many Requests", response=response)
+            time.sleep(_RETRY_BACKOFF_S * (attempt + 1))
+            continue
+        response.raise_for_status()
+        return response.json().get("elements", [])
+    raise last_error
 
 
 def fetch_land_use_features_bbox(south: float, west: float, north: float, east: float) -> gpd.GeoDataFrame:
