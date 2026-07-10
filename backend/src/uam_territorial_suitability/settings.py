@@ -34,3 +34,16 @@ def heliports_airports_path() -> str | None:
     aeronautical-infrastructure sub-factor (existing helipads/airports
     nearby are a positive, not a conflict — unlike criterion 4)."""
     return os.environ.get("HELIPORTS_AIRPORTS_PATH")
+
+
+def heliport_path() -> str | None:
+    """ANAC heliport-only dataset (tipo=HP) — for site_type.py detection.
+    Distinct from heliports_airports_path() because site typing needs to
+    tell heliponto and aeródromo apart, not just "aeronautical infra"."""
+    return os.environ.get("HELIPORT_PATH")
+
+
+def aerodrome_path() -> str | None:
+    """ANAC aerodrome-only dataset (tipo=AD) — for site_type.py detection
+    (flags a match as out of Módulo 02's scope, D52)."""
+    return os.environ.get("AERODROME_PATH")

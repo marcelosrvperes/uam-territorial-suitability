@@ -3,7 +3,7 @@ from functools import lru_cache
 
 import geopandas as gpd
 import requests
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 from shapely.geometry import Point
 
@@ -21,6 +21,7 @@ from uam_territorial_suitability.osm_fetch import (
     fetch_major_roads,
     fetch_transit_nodes,
 )
+from uam_territorial_suitability.site_type import SiteTypeResult, detect_site_type
 
 router = APIRouter()
 
@@ -35,10 +36,36 @@ def _cached_heliports_airports(path: str) -> gpd.GeoDataFrame:
     return load_heliports_airports(path)
 
 
+_EMPTY_ANAC = gpd.GeoDataFrame({"ciad": [], "nome": [], "elevacao": []}, geometry=[], crs="EPSG:31983")
+
+
 @router.get("/criteria", response_model=list[Criterion])
 def list_criteria() -> list[Criterion]:
     """Return the territorial aptitude criteria currently defined for the tool."""
     return CRITERIA
+
+
+@router.get("/site-type", response_model=SiteTypeResult)
+def get_site_type(
+    latitude: float = Query(ge=-90, le=90),
+    longitude: float = Query(ge=-180, le=180),
+) -> SiteTypeResult:
+    """Classify a clicked point before any aptitude computation (D52).
+
+    Distinguishes an existing heliponto (elevated/ground), an aeródromo
+    certificado (out of Módulo 02's scope — see D52), or no ANAC match at
+    all (likely laje or a new proposal). Meant to be called first, so the
+    frontend can show real context instead of a blind click.
+    """
+    site_wgs84 = gpd.GeoSeries([Point(longitude, latitude)], crs="EPSG:4326")
+    site = site_wgs84.to_crs("EPSG:31983").iloc[0]
+
+    heliport_path = settings.heliport_path()
+    heliports = _cached_heliports_airports(heliport_path) if heliport_path else _EMPTY_ANAC
+    aerodrome_path = settings.aerodrome_path()
+    aerodromes = _cached_heliports_airports(aerodrome_path) if aerodrome_path else _EMPTY_ANAC
+
+    return detect_site_type(site.x, site.y, heliports, aerodromes, dtm_path=settings.dtm_path())
 
 
 class CriterionStatus(str, Enum):
