@@ -32,9 +32,21 @@ type AptitudeResponse = {
   note: string;
 };
 
+// Mirrors backend SiteTypeResult (site_type.py, D55).
+type SiteTypeResponse = {
+  site_type: "heliponto" | "aerodromo" | "sem_registro";
+  ciad: string | null;
+  nome: string | null;
+  elevacao_m: number | null;
+  elevated: boolean | null;
+  in_scope: boolean;
+  note: string;
+};
+
 type MarkerState = {
   lat: number;
   lon: number;
+  siteType: SiteTypeResponse | null;
   result: AptitudeResponse | null;
   loading: boolean;
   error: string | null;
@@ -49,7 +61,20 @@ function ClickHandler({ onClick }: { onClick: (lat: number, lon: number) => void
   return null;
 }
 
-async function computeAptitude(lat: number, lon: number): Promise<AptitudeResponse> {
+async function fetchSiteType(lat: number, lon: number): Promise<SiteTypeResponse> {
+  const params = new URLSearchParams({ latitude: String(lat), longitude: String(lon) });
+  const response = await fetch(`${API_URL}/api/site-type?${params}`);
+  if (!response.ok) {
+    throw new Error(`API respondeu ${response.status}`);
+  }
+  return response.json();
+}
+
+async function computeAptitude(
+  lat: number,
+  lon: number,
+  referenceElevationM: number,
+): Promise<AptitudeResponse> {
   const response = await fetch(`${API_URL}/api/aptitude`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -59,7 +84,7 @@ async function computeAptitude(lat: number, lon: number): Promise<AptitudeRespon
       available_diameter_m: 40.0,
       aircraft_d_m: 16.0,
       geometry_standard: "easa",
-      reference_elevation_m: 760.0,
+      reference_elevation_m: referenceElevationM,
     }),
   });
   if (!response.ok) {
@@ -68,48 +93,99 @@ async function computeAptitude(lat: number, lon: number): Promise<AptitudeRespon
   return response.json();
 }
 
+// Placeholder used only when the site has no ANAC record (laje/proposta nova)
+// to draw its own ground elevation from — no real source wired up yet.
+const FALLBACK_REFERENCE_ELEVATION_M = 760.0;
+
 const CRITERION_LABELS: Record<string, string> = {
   geometry: "Geometria",
   airspace_light: "Compatibilidade aeroespacial",
-  topography: "Topografia",
   obstacles: "Obstáculos físicos",
   land_use: "Uso do solo",
   proximity: "Proximidade a infraestrutura",
   heliport_retrofit: "Adequação de heliponto",
 };
 
+const SITE_TYPE_LABELS: Record<SiteTypeResponse["site_type"], string> = {
+  heliponto: "Heliponto existente",
+  aerodromo: "Aeródromo certificado",
+  sem_registro: "Sem registro ANAC",
+};
+
+function SiteTypePanel({ siteType }: { siteType: SiteTypeResponse }) {
+  const label = SITE_TYPE_LABELS[siteType.site_type];
+  const suffix =
+    siteType.site_type === "heliponto"
+      ? siteType.elevated === true
+        ? " (elevado)"
+        : siteType.elevated === false
+          ? " (solo)"
+          : ""
+      : "";
+  return (
+    <div
+      style={{
+        background: siteType.in_scope ? "#eef6ee" : "#f6efe0",
+        border: `1px solid ${siteType.in_scope ? "#bcd9bc" : "#e0c98c"}`,
+        borderRadius: 4,
+        padding: "0.6rem 0.75rem",
+        marginBottom: "0.75rem",
+        fontSize: "0.85rem",
+      }}
+    >
+      <strong>
+        {label}
+        {suffix}
+      </strong>
+      {siteType.nome && <div>{siteType.nome} {siteType.ciad ? `(${siteType.ciad})` : ""}</div>}
+      <div style={{ color: "#555", marginTop: "0.25rem" }}>{siteType.note}</div>
+    </div>
+  );
+}
+
 function ResultPanel({ marker }: { marker: MarkerState }) {
-  if (marker.loading) return <p>Calculando…</p>;
   if (marker.error) return <p style={{ color: "#b00" }}>Erro: {marker.error}</p>;
-  if (!marker.result) return null;
+  if (!marker.siteType) return <p>Identificando o sítio…</p>;
 
   return (
     <div style={{ fontSize: "0.9rem" }}>
-      <p style={{ margin: "0 0 0.5rem" }}>
-        <strong>{marker.result.note}</strong>
-      </p>
-      {marker.result.aptitude !== null && (
-        <p>
-          Score de aptidão: <strong>{marker.result.aptitude.toFixed(3)}</strong>
-          {marker.result.excluded ? " (excluído)" : ""}
+      <SiteTypePanel siteType={marker.siteType} />
+      {!marker.siteType.in_scope && (
+        <p style={{ color: "#555" }}>
+          Este módulo não calcula aptidão para aeródromo certificado — ver Módulo 03 (Zonas de
+          Proteção).
         </p>
       )}
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <tbody>
-          {Object.entries(marker.result.criteria).map(([id, outcome]) => (
-            <tr key={id}>
-              <td style={{ padding: "2px 4px" }}>{CRITERION_LABELS[id] ?? id}</td>
-              <td style={{ padding: "2px 4px", color: outcome.status === "computed" ? "#080" : "#888" }}>
-                {outcome.status === "computed"
-                  ? typeof outcome.value === "number"
-                    ? outcome.value.toFixed(2)
-                    : String(outcome.value)
-                  : outcome.status}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {marker.siteType.in_scope && marker.loading && <p>Calculando aptidão…</p>}
+      {marker.siteType.in_scope && marker.result && (
+        <>
+          <p style={{ margin: "0 0 0.5rem" }}>
+            <strong>{marker.result.note}</strong>
+          </p>
+          {marker.result.aptitude !== null && (
+            <p>
+              Score de aptidão: <strong>{marker.result.aptitude.toFixed(3)}</strong>
+              {marker.result.excluded ? " (excluído)" : ""}
+            </p>
+          )}
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <tbody>
+              {Object.entries(marker.result.criteria).map(([id, outcome]) => (
+                <tr key={id}>
+                  <td style={{ padding: "2px 4px" }}>{CRITERION_LABELS[id] ?? id}</td>
+                  <td style={{ padding: "2px 4px", color: outcome.status === "computed" ? "#080" : "#888" }}>
+                    {outcome.status === "computed"
+                      ? typeof outcome.value === "number"
+                        ? outcome.value.toFixed(2)
+                        : String(outcome.value)
+                      : outcome.status}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
     </div>
   );
 }
@@ -118,15 +194,21 @@ export default function AptitudeMap() {
   const [marker, setMarker] = useState<MarkerState | null>(null);
 
   async function handleMapClick(lat: number, lon: number) {
-    setMarker({ lat, lon, result: null, loading: true, error: null });
+    setMarker({ lat, lon, siteType: null, result: null, loading: true, error: null });
     try {
-      const result = await computeAptitude(lat, lon);
-      setMarker({ lat, lon, result, loading: false, error: null });
+      const siteType = await fetchSiteType(lat, lon);
+      setMarker({ lat, lon, siteType, result: null, loading: siteType.in_scope, error: null });
+
+      if (!siteType.in_scope) return; // aeródromo certificado — Módulo 03, não este
+
+      const referenceElevationM = siteType.elevacao_m ?? FALLBACK_REFERENCE_ELEVATION_M;
+      const result = await computeAptitude(lat, lon, referenceElevationM);
+      setMarker({ lat, lon, siteType, result, loading: false, error: null });
     } catch (err) {
-      setMarker({
-        lat, lon, result: null, loading: false,
+      setMarker((prev) => ({
+        lat, lon, siteType: prev?.siteType ?? null, result: null, loading: false,
         error: err instanceof Error ? err.message : String(err),
-      });
+      }));
     }
   }
 
