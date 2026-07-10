@@ -15,7 +15,6 @@ from uam_territorial_suitability.criteria_geometry import GeometryStandard, pass
 from uam_territorial_suitability.criteria_land_use import ZONE_RADIUS_M, Zone, land_use_score
 from uam_territorial_suitability.criteria_obstacles import find_ofv_violations, obstacles_score
 from uam_territorial_suitability.criteria_proximity import proximity_score
-from uam_territorial_suitability.criteria_topography import mean_slope_percent, passes_topography
 from uam_territorial_suitability.data_sources import load_heliports_airports, load_reh_corridors
 from uam_territorial_suitability.osm_fetch import (
     fetch_land_use_features,
@@ -64,9 +63,9 @@ class AptitudeRequest(BaseModel):
     reference_elevation_m: float | None = Field(
         default=None, description="Site ground elevation, needed for the obstacles criterion."
     )
-    elevated_heliport: bool = Field(
-        default=False, description="Whether the site is an elevated (rooftop/structure) heliport."
-    )
+    # NOTE (D53): elevated_heliport was removed — it only fed the topography check, which is out
+    # of this module's scope now. Site-type (elevated/ground/laje) will come back as a proper field
+    # once the site-type auto-detection feature (D52) is built.
 
 
 class AptitudeResponse(BaseModel):
@@ -115,37 +114,10 @@ def compute_aptitude(request: AptitudeRequest) -> AptitudeResponse:
             status=CriterionStatus.COMPUTED, value=airspace_light_score(site, reh)
         )
 
-    # --- topography (exclusion) ---
-    dtm_path = settings.dtm_path()
-    if dtm_path is None:
-        results["topography"] = CriterionOutcome(
-            status=CriterionStatus.NOT_IMPLEMENTED, detail="DTM_PATH not configured."
-        )
-    elif request.elevated_heliport:
-        # D47: a bare-earth DTM has no meaning at a rooftop/structure site —
-        # there is no terrain under the pad to sample (validated against real
-        # data: rooftop sites showed <30% valid DTM coverage in an 8 m window,
-        # with the few valid pixels picking up street level ~50-60m below the
-        # pad, producing physically nonsensical slopes up to hundreds of
-        # percent). The FATO grading check only applies to ground-level
-        # candidate sites; an elevated pad's flatness is a construction fact,
-        # not something a terrain model can assess.
-        results["topography"] = CriterionOutcome(
-            status=CriterionStatus.NOT_IMPLEMENTED,
-            detail="Not applicable to elevated/rooftop sites — no bare-earth terrain exists under the pad (D47).",
-        )
-    else:
-        try:
-            slope = mean_slope_percent(
-                dtm_path, center_x=site.x, center_y=site.y,
-                radius_m=request.available_diameter_m / 2,
-            )
-            results["topography"] = CriterionOutcome(
-                status=CriterionStatus.COMPUTED,
-                value=passes_topography(slope, elevated=request.elevated_heliport),
-            )
-        except ValueError as exc:
-            results["topography"] = CriterionOutcome(status=CriterionStatus.FAILED, detail=str(exc))
+    # NOTE (D53, 2026-07-09): topography was removed from this endpoint entirely — the module's
+    # 3 remaining site categories (elevated heliport, ground heliport, laje) are all already-built,
+    # already-flat structures; natural terrain slope doesn't apply. See criteria.py and D52/D53.
+    # mean_slope_percent/passes_topography remain implemented and tested, just unused here.
 
     # --- obstacles (weighted) — near-site OFV path only (D36) ---
     dsm_path = settings.dsm_path()
@@ -233,7 +205,7 @@ def compute_aptitude(request: AptitudeRequest) -> AptitudeResponse:
     all_computed = all(outcome.status == CriterionStatus.COMPUTED for outcome in results.values())
     if all_computed:
         exclusion_pass = {
-            cid: bool(results[cid].value) for cid in ["geometry", "heliport_retrofit", "topography"]
+            cid: bool(results[cid].value) for cid in ["geometry", "heliport_retrofit"]
         }
         weighted_scores = {
             cid: float(results[cid].value)

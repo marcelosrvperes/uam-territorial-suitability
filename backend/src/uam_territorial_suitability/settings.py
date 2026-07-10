@@ -21,8 +21,11 @@ def dsm_path() -> str | None:
 
 
 def dtm_path() -> str | None:
-    """Digital Terrain Model (MDT) — for the topography criterion. Must be
-    bare-earth; do NOT point this at the same file as DSM_PATH (see D35)."""
+    """Digital Terrain Model (MDT) — was used by the topography criterion.
+    Must be bare-earth; do NOT point this at the same file as DSM_PATH (see
+    D35). Currently unused by api/routes.py (D53 removed topography from this
+    module's scope) — kept for whenever raw-terrain siting becomes relevant
+    to some future module."""
     return os.environ.get("DTM_PATH")
 
 

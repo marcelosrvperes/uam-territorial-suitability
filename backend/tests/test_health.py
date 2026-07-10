@@ -15,7 +15,9 @@ def test_list_criteria() -> None:
     response = client.get("/api/criteria")
     assert response.status_code == 200
     criteria = response.json()
-    assert len(criteria) == 7
+    # D53: topography removed from this module's active criteria (D52 narrowed
+    # scope to retrofit-only sites, all already-built/already-flat).
+    assert len(criteria) == 6
     assert {c["id"] for c in criteria} == {
         "geometry",
         "obstacles",
@@ -23,5 +25,4 @@ def test_list_criteria() -> None:
         "land_use",
         "proximity",
         "airspace_light",
-        "topography",
     }

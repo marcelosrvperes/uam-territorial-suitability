@@ -77,7 +77,7 @@ def test_aptitude_marks_unimplemented_criteria() -> None:
     body = response.json()
     # land_use and proximity are always attempted (live OSM, no config gate)
     # — mocked to empty results above, so they come back "computed".
-    for criterion_id in ["obstacles", "heliport_retrofit", "topography"]:
+    for criterion_id in ["obstacles", "heliport_retrofit"]:
         assert body["criteria"][criterion_id]["status"] == "not_implemented"
     assert body["criteria"]["land_use"]["status"] == "computed"
     assert body["criteria"]["proximity"]["status"] == "computed"
@@ -85,18 +85,11 @@ def test_aptitude_marks_unimplemented_criteria() -> None:
     assert body["aptitude"] is None
 
 
-def test_aptitude_skips_topography_for_elevated_site(monkeypatch: pytest.MonkeyPatch) -> None:
-    """D47: a rooftop/elevated site has no bare-earth DTM underneath it — the
-    endpoint must not even attempt the DTM read, not just discard a garbage
-    result."""
-    monkeypatch.setenv("DTM_PATH", "dummy_not_read.tif")
-    with patch("uam_territorial_suitability.api.routes.mean_slope_percent") as mocked:
-        payload = {**VALID_PAYLOAD, "elevated_heliport": True}
-        response = client.post("/api/aptitude", json=payload)
-        mocked.assert_not_called()
-    body = response.json()
-    assert body["criteria"]["topography"]["status"] == "not_implemented"
-    assert "elevat" in body["criteria"]["topography"]["detail"].lower()
+def test_aptitude_does_not_return_topography() -> None:
+    """D53: topography was removed from this module's scope — it must not
+    appear in the response at all, not even as not_implemented."""
+    response = client.post("/api/aptitude", json=VALID_PAYLOAD)
+    assert "topography" not in response.json()["criteria"]
 
 
 def test_aptitude_proximity_computed_via_mocked_osm() -> None:

@@ -42,18 +42,21 @@ CRITERIA: list[Criterion] = [
         name="Obstáculos físicos",
         kind=CriterionKind.WEIGHTED,
         weight=0.221,
-        sources=["RBAC 154 / ICAO Annex 14 Vol I", "FAA EB-105A / EASA PTS-VPT-DSN (Obstacle-Free Volume)"],
+        sources=["FAA EB-105A / EASA PTS-VPT-DSN (Obstacle-Free Volume)"],
         notes=(
-            "RBAC 154/Anexo 14 para sítios que já são aeródromo certificado; "
-            "OFV nativo FAA/EASA para os demais (D26)."
+            "Só o caminho OFV — módulo restrito a retrofit sem pista fixa (D52). "
+            "RBAC 154/Anexo 14 Vol I (aeródromo certificado) saiu do escopo, ver Módulo 03."
         ),
     ),
     Criterion(
         id="heliport_retrofit",
-        name="Adequação de heliponto/aeródromo existente",
+        name="Adequação de heliponto/laje existente",
         kind=CriterionKind.EXCLUSION,
         sources=["Aplicação combinada dos critérios geometry + obstacles"],
-        notes="Não é critério independente — reaproveita geometry/obstacles sobre a base ANAC/DECEA.",
+        notes=(
+            "Não é critério independente — reaproveita geometry/obstacles. Heliponto elevado/solo, "
+            "laje (D52); aeródromo certificado saiu do escopo."
+        ),
     ),
     Criterion(
         id="land_use",
@@ -82,11 +85,10 @@ CRITERIA: list[Criterion] = [
             "e peso na agregação são eixos independentes (ver DECISIONS.md D29/D30)."
         ),
     ),
-    Criterion(
-        id="topography",
-        name="Topografia / declividade",
-        kind=CriterionKind.EXCLUSION,
-        sources=["ICAO Annex 14 Vol II — Heliports"],
-        notes="FATO ≤3% geral, ≤2% heliponto elevado (analogia heliponto→vertiporto).",
-    ),
+    # NOTE (D53, 2026-07-09): topography was removed from this module's active criteria list.
+    # The 3 site categories left in scope after D52 (elevated heliport, ground heliport, laje)
+    # are all already-built, already-flat structures — natural terrain slope doesn't apply to
+    # any of them. It only mattered for greenfield ("estado-da-arte") construction, which left
+    # the module's scope too. The implementation (criteria_topography.py) is NOT deleted — kept
+    # for whenever raw-terrain siting becomes relevant to some future module.
 ]

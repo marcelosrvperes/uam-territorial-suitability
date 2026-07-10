@@ -1,8 +1,9 @@
 """AHP-based aggregation of territorial aptitude criteria.
 
 Two-stage structure (see 13-Camada2/04-metodologia/metodo_agregacao.md, D25):
-  1. Binary exclusion filters (geometry, heliport_retrofit, topography) — a site
-     failing any of these is discarded outright, no partial credit.
+  1. Binary exclusion filters (geometry, heliport_retrofit) — a site failing
+     any of these is discarded outright, no partial credit. Topography was
+     dropped from this module's exclusion set (D53) — out of scope now.
   2. Weighted aggregation (AHP) of the continuous criteria (obstacles, land_use,
      proximity, airspace_light) for sites that pass stage 1.
 
