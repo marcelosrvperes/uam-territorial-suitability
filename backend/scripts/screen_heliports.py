@@ -59,7 +59,8 @@ def screen(heliport_shp: str, dsm_path: str) -> list[dict]:
             if np.isnan(pixel):
                 continue
 
-            reliable = abs(float(pixel) - float(elevacao)) <= _RELIABILITY_THRESHOLD_M
+            delta_m = float(pixel) - float(elevacao)
+            reliable = abs(delta_m) <= _RELIABILITY_THRESHOLD_M
             max_d = max_supportable_aircraft_d(dsm_path, x, y, float(elevacao))
 
             results.append({
@@ -70,6 +71,7 @@ def screen(heliport_shp: str, dsm_path: str) -> list[dict]:
                 "elevacao_m": float(elevacao),
                 "max_d_m": max_d,
                 "reliable": reliable,
+                "delta_m": delta_m,  # DSM-at-point minus ANAC-reported ARP (D45/D65)
             })
     return results
 
