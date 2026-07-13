@@ -4,6 +4,7 @@ from functools import lru_cache
 import geopandas as gpd
 import requests
 from fastapi import APIRouter, Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from shapely.geometry import Point
 
@@ -253,3 +254,51 @@ def compute_aptitude(request: AptitudeRequest) -> AptitudeResponse:
             "Não use como score final de aptidão."
         ),
     )
+
+
+@router.get("/aptitude/report", response_class=HTMLResponse)
+def aptitude_report(
+    latitude: float = Query(ge=-90, le=90),
+    longitude: float = Query(ge=-180, le=180),
+    available_diameter_m: float = Query(gt=0),
+    aircraft_d_m: float = Query(default=16.0, gt=0),
+    aircraft_rd_m: float | None = Query(default=None, gt=0),
+    geometry_standard: GeometryStandard = Query(default=GeometryStandard.EASA),
+    reference_elevation_m: float | None = Query(default=None),
+) -> HTMLResponse:
+    """Printable/exportable aptitude report for one candidate site.
+
+    Distinct output type from the raw JSON (`POST /aptitude`) and the
+    interactive map — closes a pendency left open at Gate G3 (STATUS.md,
+    2026-07-13): the tool's functional scope always called for "mapas,
+    indicadores e relatórios" as three separate outputs.
+
+    Reuses `compute_aptitude` directly rather than duplicating its logic —
+    a GET wrapper around the same request/response shape, plus site-type
+    context when available.
+    """
+    from uam_territorial_suitability.report import render_aptitude_report_html
+
+    request = AptitudeRequest(
+        latitude=latitude,
+        longitude=longitude,
+        available_diameter_m=available_diameter_m,
+        aircraft_d_m=aircraft_d_m,
+        aircraft_rd_m=aircraft_rd_m,
+        geometry_standard=geometry_standard,
+        reference_elevation_m=reference_elevation_m,
+    )
+    response = compute_aptitude(request)
+
+    site_type: SiteTypeResult | None = None
+    heliport_path = settings.heliport_path()
+    aerodrome_path = settings.aerodrome_path()
+    if heliport_path or aerodrome_path:
+        heliports = _cached_heliports_airports(heliport_path) if heliport_path else _EMPTY_ANAC
+        aerodromes = _cached_heliports_airports(aerodrome_path) if aerodrome_path else _EMPTY_ANAC
+        site_wgs84 = gpd.GeoSeries([Point(longitude, latitude)], crs="EPSG:4326")
+        site = site_wgs84.to_crs("EPSG:31983").iloc[0]
+        site_type = detect_site_type(site.x, site.y, heliports, aerodromes, dtm_path=settings.dtm_path())
+
+    html = render_aptitude_report_html(request, response, site_type)
+    return HTMLResponse(content=html)
