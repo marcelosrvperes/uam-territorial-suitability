@@ -48,6 +48,7 @@ type MarkerState = {
   lon: number;
   siteType: SiteTypeResponse | null;
   result: AptitudeResponse | null;
+  referenceElevationM: number | null;
   loading: boolean;
   error: string | null;
 };
@@ -70,6 +71,20 @@ async function fetchSiteType(lat: number, lon: number): Promise<SiteTypeResponse
   return response.json();
 }
 
+// Mirrors the body sent to POST /api/aptitude — kept in one place so the
+// "Ver relatório" link (GET /api/aptitude/report) always requests the exact
+// same computation the user already saw on screen.
+function aptitudeParams(lat: number, lon: number, referenceElevationM: number) {
+  return {
+    latitude: lat,
+    longitude: lon,
+    available_diameter_m: 40.0,
+    aircraft_d_m: 16.0,
+    geometry_standard: "easa",
+    reference_elevation_m: referenceElevationM,
+  };
+}
+
 async function computeAptitude(
   lat: number,
   lon: number,
@@ -78,19 +93,20 @@ async function computeAptitude(
   const response = await fetch(`${API_URL}/api/aptitude`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      latitude: lat,
-      longitude: lon,
-      available_diameter_m: 40.0,
-      aircraft_d_m: 16.0,
-      geometry_standard: "easa",
-      reference_elevation_m: referenceElevationM,
-    }),
+    body: JSON.stringify(aptitudeParams(lat, lon, referenceElevationM)),
   });
   if (!response.ok) {
     throw new Error(`API respondeu ${response.status}`);
   }
   return response.json();
+}
+
+function reportUrl(lat: number, lon: number, referenceElevationM: number): string {
+  const params = aptitudeParams(lat, lon, referenceElevationM);
+  const query = new URLSearchParams(
+    Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])),
+  );
+  return `${API_URL}/api/aptitude/report?${query}`;
 }
 
 // Placeholder used only when the site has no ANAC record (laje/proposta nova)
@@ -184,6 +200,17 @@ function ResultPanel({ marker }: { marker: MarkerState }) {
               ))}
             </tbody>
           </table>
+          {marker.referenceElevationM !== null && (
+            <p style={{ marginTop: "0.75rem" }}>
+              <a
+                href={reportUrl(marker.lat, marker.lon, marker.referenceElevationM)}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Ver relatório completo ↗
+              </a>
+            </p>
+          )}
         </>
       )}
     </div>
@@ -194,19 +221,23 @@ export default function AptitudeMap() {
   const [marker, setMarker] = useState<MarkerState | null>(null);
 
   async function handleMapClick(lat: number, lon: number) {
-    setMarker({ lat, lon, siteType: null, result: null, loading: true, error: null });
+    setMarker({ lat, lon, siteType: null, result: null, referenceElevationM: null, loading: true, error: null });
     try {
       const siteType = await fetchSiteType(lat, lon);
-      setMarker({ lat, lon, siteType, result: null, loading: siteType.in_scope, error: null });
+      setMarker({
+        lat, lon, siteType, result: null, referenceElevationM: null,
+        loading: siteType.in_scope, error: null,
+      });
 
       if (!siteType.in_scope) return; // aeródromo certificado — Módulo 03, não este
 
       const referenceElevationM = siteType.elevacao_m ?? FALLBACK_REFERENCE_ELEVATION_M;
       const result = await computeAptitude(lat, lon, referenceElevationM);
-      setMarker({ lat, lon, siteType, result, loading: false, error: null });
+      setMarker({ lat, lon, siteType, result, referenceElevationM, loading: false, error: null });
     } catch (err) {
       setMarker((prev) => ({
-        lat, lon, siteType: prev?.siteType ?? null, result: null, loading: false,
+        lat, lon, siteType: prev?.siteType ?? null, result: null,
+        referenceElevationM: prev?.referenceElevationM ?? null, loading: false,
         error: err instanceof Error ? err.message : String(err),
       }));
     }
